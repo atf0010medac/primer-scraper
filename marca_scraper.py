@@ -3,7 +3,6 @@ import requests
 import sqlite3
 import re
 
-# URLs del scraper
 urls = [
     "https://www.marca.com/futbol.html?intcmp=MENUPROD&s_kw=futbol",
     "https://www.marca.com/futbol/real-madrid/2025/09/24/madrid-llega-lanzado-derbi.html",
@@ -21,7 +20,6 @@ for url in urls:
         continue
     soup = BeautifulSoup(response.text, "html.parser")
 
-    # Si es la portada de fútbol
     if "futbol.html" in url:
         titulos = soup.find_all(class_="ue-c-cover-content__headline")
         for titulo_tag in titulos[:5]:  # Limitar a 5 titulares
@@ -32,7 +30,7 @@ for url in urls:
                 "fecha": "Desconocida",
                 "autor": "Marca"
             })
-    else:  # Artículos individuales
+    else:  
         header = soup.find("div", class_="ue-l-article__header")
         titulo = header.get_text(strip=True, separator=" ") if header else "Sin título"
 
@@ -46,7 +44,6 @@ for url in urls:
             "autor": "Marca"
         })
 
-# Guardar en SQLite (solo las 5 noticias más recientes)
 conn = sqlite3.connect("noticias.db")
 cursor = conn.cursor()
 
@@ -60,10 +57,8 @@ cursor.execute('''
     )
 ''')
 
-# Borrar noticias antiguas
 cursor.execute('DELETE FROM noticias')
 
-# Insertar solo las 5 primeras noticias
 for n in noticias[:5]:
     cursor.execute('''
         INSERT INTO noticias (titulo, enlace, fecha, autor)
