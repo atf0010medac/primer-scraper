@@ -22,7 +22,7 @@ for url in urls:
 
     if "futbol.html" in url:
         titulos = soup.find_all(class_="ue-c-cover-content__headline")
-        for titulo_tag in titulos[:5]:  # Limitar a 5 titulares
+        for titulo_tag in titulos[:5]: 
             titulo = titulo_tag.get_text(strip=True)
             noticias.append({
                 "titulo": titulo,
