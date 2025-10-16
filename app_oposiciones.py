@@ -1,24 +1,19 @@
-# app_oposiciones.py
-
-from flask import Flask, render_template, request, redirect, url_for, g
+from flask import Flask, render_template, request, redirect, url_for, g, session, flash
 import sqlite3
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 import logging
+from werkzeug.security import generate_password_hash, check_password_hash
 
-# --------------------
-# Configuración
-# --------------------
 DB_PATH = 'oposiciones.db'
 app = Flask(__name__)
+app.secret_key = 'clave_super_segura'
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# ------------------ BASE DE DATOS ------------------ #
 
-# --------------------
-# Base de datos
-# --------------------
 def get_db():
     db = getattr(g, '_database', None)
     if db is None:
@@ -26,13 +21,11 @@ def get_db():
         db.row_factory = sqlite3.Row
     return db
 
-
 @app.teardown_appcontext
 def close_connection(exception):
     db = getattr(g, '_database', None)
     if db:
         db.close()
-
 
 def init_db():
     db = get_db()
@@ -48,14 +41,20 @@ def init_db():
             fecha TEXT
         )
     ''')
+
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL
+        )
+    ''')
     db.commit()
 
+# ------------------ SCRAPING ------------------ #
 
-# --------------------
-# Scraper BOE últimos 7 días
-# --------------------
 def scrape_boe(days=7):
-    """Raspa la sección 2B del BOE de los últimos `days` días."""
     init_db()
     db = get_db()
     total_collected = 0
@@ -65,15 +64,8 @@ def scrape_boe(days=7):
         fecha_str = dia.strftime("%Y%m%d")
         url_boe = f'https://www.boe.es/datosabiertos/api/boe/sumario/{fecha_str}'
 
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                          'AppleWebKit/537.36 (KHTML, like Gecko) '
-                          'Chrome/118.0.5993.118 Safari/537.3',
-            'Accept': 'application/xml, text/xml, */*; q=0.01'
-        }
-
         try:
-            r = requests.get(url_boe, headers=headers, timeout=10)
+            r = requests.get(url_boe, timeout=10)
             r.raise_for_status()
         except requests.RequestException as e:
             logging.warning(f"No se pudo obtener XML para {fecha_str}: {e}")
@@ -84,16 +76,22 @@ def scrape_boe(days=7):
         if not seccion:
             continue
 
-        for item in seccion.find_all("item"):
-            identificador = item.find("identificador").text.strip() if item.find("identificador") else None
-            control = item.find("control").text.strip() if item.find("control") else None
-            titulo = item.find("titulo").text.strip() if item.find("titulo") else None
-            url_html = item.find("url_html").text.strip() if item.find("url_html") else None
-            url_pdf = item.find("url_pdf").text.strip() if item.find("url_pdf") else None
-            dept_parent = item.find_parent("departamento")
-            departamento = dept_parent.get('nombre') if dept_parent and dept_parent.has_attr('nombre') else None
+        items = seccion.find_all("item")
+        logging.info(f"Fecha {fecha_str}: {len(items)} items encontrados")
 
-            if not identificador or not url_html:
+        for item in items:
+            identificador = item.findtext("identificador")
+            control = item.findtext("control")
+            titulo = item.findtext("titulo")
+            url_html = item.findtext("url_html")
+            url_pdf = item.findtext("url_pdf")
+
+            departamento = None
+            dep_tag = item.find_parent("departamento") or item.find("departamento")
+            if dep_tag:
+                departamento = dep_tag.get("nombre") or dep_tag.text.strip()
+
+            if not identificador or not url_html or not departamento:
                 continue
 
             try:
@@ -104,65 +102,52 @@ def scrape_boe(days=7):
                 db.commit()
                 total_collected += 1
             except sqlite3.IntegrityError:
-                continue  # Entrada duplicada
+                continue
 
     logging.info(f"Scraping completado. Nuevas oposiciones añadidas: {total_collected}")
     return total_collected
 
+# ------------------ RUTAS ------------------ #
 
-# --------------------
-# Rutas Flask
-# --------------------
 @app.route('/')
 def index():
     init_db()
     db = get_db()
 
-    # Obtener filtros del usuario
+    departamentos = db.execute('''
+        SELECT departamento, MAX(fecha) AS ultima_fecha
+        FROM oposiciones
+        WHERE departamento IS NOT NULL AND TRIM(departamento) != ''
+        GROUP BY departamento
+        ORDER BY ultima_fecha DESC
+    ''').fetchall()
+
+    return render_template('index.html', departamentos=departamentos)
+
+@app.route('/departamento/<nombre>')
+def ver_departamento(nombre):
+    db = get_db()
+
     q = request.args.get('q', '').strip()
-    departamento = request.args.get('departamento', '').strip()
     fecha = request.args.get('fecha', '').strip()
 
-    sql = 'SELECT * FROM oposiciones'
-    params = []
-    where = []
+    sql = 'SELECT * FROM oposiciones WHERE departamento = ?'
+    params = [nombre]
 
     if q:
         likeq = f'%{q}%'
-        where.append("(identificador LIKE ? OR control LIKE ? OR titulo LIKE ?)")
+        sql += ' AND (titulo LIKE ? OR identificador LIKE ? OR control LIKE ?)'
         params.extend([likeq, likeq, likeq])
 
-    if departamento:
-        where.append("departamento = ?")
-        params.append(departamento)
-
     if fecha:
-        where.append("fecha = ?")
+        sql += ' AND fecha = ?'
         params.append(fecha.replace('-', ''))
 
-    if where:
-        sql += ' WHERE ' + ' AND '.join(where)
-
-    # Ordenar por fecha descendente y luego id descendente
     sql += ' ORDER BY fecha DESC, id DESC'
 
     rows = db.execute(sql, params).fetchall()
 
-    # Lista de departamentos para el filtro
-    departamentos = db.execute(
-        'SELECT DISTINCT departamento FROM oposiciones WHERE departamento IS NOT NULL ORDER BY departamento'
-    ).fetchall()
-
-    return render_template(
-        'index.html',
-        rows=rows,
-        q=q,
-        departamento=departamento,
-        fecha=fecha,
-        departamentos=departamentos
-    )
-
-
+    return render_template('departamento.html', nombre=nombre, rows=rows, q=q, fecha=fecha)
 
 @app.route('/scrape')
 def trigger_scrape():
@@ -170,12 +155,53 @@ def trigger_scrape():
         scrape_boe()
     return redirect(url_for('index'))
 
+# ------------------ LOGIN / REGISTRO ------------------ #
 
-# --------------------
-# Inicio de la app
-# --------------------
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        email = request.form['email']
+        password = request.form['password']
+
+        db = get_db()
+        user = db.execute("SELECT * FROM usuarios WHERE email = ?", (email,)).fetchone()
+
+        if user and check_password_hash(user['password'], password):
+            session['user'] = user['nombre']
+            return redirect(url_for('index'))
+        else:
+            flash("Credenciales incorrectas", "danger")
+
+    return render_template('login.html')
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        nombre = request.form['nombre']
+        email = request.form['email']
+        password = generate_password_hash(request.form['password'])
+
+        db = get_db()
+        try:
+            db.execute("INSERT INTO usuarios (nombre, email, password) VALUES (?, ?, ?)",
+                       (nombre, email, password))
+            db.commit()
+            flash("Registro completado. Ahora puedes iniciar sesión.", "success")
+            return redirect(url_for('login'))
+        except sqlite3.IntegrityError:
+            flash("El correo ya está registrado.", "danger")
+
+    return render_template('register.html')
+
+@app.route('/logout')
+def logout():
+    session.pop('user', None)
+    return redirect(url_for('index'))
+
+# ------------------ MAIN ------------------ #
+
 if __name__ == '__main__':
     with app.app_context():
         init_db()
-        scrape_boe()  # Rellena la BD con últimos 7 días automáticamente al iniciar
+        scrape_boe()
     app.run(debug=True)

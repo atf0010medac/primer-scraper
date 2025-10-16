@@ -1,0 +1,69 @@
+/* ===== Estilos globales ===== */
+body {
+    background-color: #f8f9fa;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+/* ===== Navbar ===== */
+.navbar {
+    height: 60px;
+}
+
+/* ===== Tarjetas ===== */
+.card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    border-radius: 10px;
+}
+
+.card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+}
+
+/* Tarjetas con hover más destacadas */
+.hover-card {
+    transition: all 0.2s ease-in-out;
+    border: 1px solid #e0e0e0;
+    border-radius: 12px;
+}
+
+.hover-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 6px 15px rgba(0, 0, 0, 0.1);
+    border-color: #0d6efd; /* Azul Bootstrap */
+}
+
+/* ===== Footer ===== */
+footer {
+    position: relative;
+    bottom: 0;
+    width: 100%;
+}
+
+/* ===== Formularios ===== */
+form.d-flex input,
+form.d-flex select {
+    max-width: 250px;
+}
+
+form.d-flex button {
+    white-space: nowrap;
+}
+
+/* ===== Botón flotante para volver al inicio ===== */
+.btn-primary.position-fixed {
+    font-size: 1.2rem;
+    padding: 12px 16px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    transition: all 0.2s ease-in-out;
+}
+
+.btn-primary.position-fixed:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 15px rgba(0,0,0,0.3);
+}
+
+/* ===== Alertas ===== */
+.alert {
+    font-size: 0.9rem;
+}
